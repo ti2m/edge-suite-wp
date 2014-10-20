@@ -177,7 +177,7 @@ function edge_suite_init() {
     //Get post composition
     else {
       global $post;
-      if(isset($post->ID)){
+      if(isset($post->ID) && is_single()){
         $post_id = $post->ID;
         $post_reference_id = get_post_meta($post_id, '_edge_composition', TRUE);
         if (!empty($post_reference_id)) {
