@@ -236,25 +236,44 @@ function edge_suite_comp_render($definition_id, $styles = '', $data = array()) {
 
     $preload_url = $project_path . '/' . $definition->project_name . '_edgePreload.js';
 
-    $js_inline = 'window.AdobeEdge = window.AdobeEdge || {};';
-    $js_inline .= 'window.AdobeEdge.pathPrefix = window.AdobeEdge.pathPrefix || {};';
-    $js_inline .= "AdobeEdge.pathPrefix.libs = '" . $edge_lib_path . "';";
-    $js_inline .= "AdobeEdge.pathPrefix.comps = AdobeEdge.pathPrefix.comps || {};";
-    $js_inline .= "AdobeEdge.pathPrefix.comps['" . $definition->composition_id . "'] = '" . $project_path . "';";
+    if (isset($definition->info->version) && !empty($definition->info->version) && $definition->info->version >= 5) {
+      $runtime = "//animate.adobe.com/runtime/5.0.0/edge.5.0.0.min.js";
+      $composition_call_js = "AdobeEdge.loadComposition('" . $definition->project_name . "', '" . $definition->composition_id . "', {htmlRoot:'" . $project_path . '/' .  "'});";
 
-    if(get_option('edge_suite_debug') == 1){
-      $js_inline .= "AdobeEdge.edgesuiteDebug = 1;";
+      $js_inline = 'var script = document.createElement("script");
+      script.type= "text/javascript";
+      script.src = "' . $runtime . '";
+      var head = document.getElementsByTagName("head")[0], done=false;
+	  script.onload = script.onreadystatechange = function(){
+        if (!done && (!this.readyState || this.readyState == "loaded" || this.readyState == "complete")) {
+          done=true;
+          ' . $composition_call_js . '
+          script.onload = script.onreadystatechange = null;
+          head.removeChild(script);
+		}
+      };
+      head.appendChild(script);';
+      $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
     }
+    else {
+      $js_inline = 'window.AdobeEdge = window.AdobeEdge || {};';
+      $js_inline .= 'window.AdobeEdge.pathPrefix = window.AdobeEdge.pathPrefix || {};';
+      $js_inline .= "AdobeEdge.pathPrefix.libs = '" . $edge_lib_path . "';";
+      $js_inline .= "AdobeEdge.pathPrefix.comps = AdobeEdge.pathPrefix.comps || {};";
+      $js_inline .= "AdobeEdge.pathPrefix.comps['" . $definition->composition_id . "'] = '" . $project_path . "';";
 
-    if(get_option('edge_suite_jquery_noconflict') == 1){
-      $js_inline .= "AdobeEdge.edgesuiteNoConflict = 1;";
+      if(get_option('edge_suite_debug') == 1){
+        $js_inline .= "AdobeEdge.edgesuiteDebug = 1;";
+      }
+
+      if(get_option('edge_suite_jquery_noconflict') == 1){
+        $js_inline .= "AdobeEdge.edgesuiteNoConflict = 1;";
+      }
+
+      $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
+      $scripts[] = '<script type="text/javascript" src="' . plugins_url('/edge-suite') . '/includes/edge-wordpress.js"></script>';
+      $scripts[] = '<script type="text/javascript" src="' . $preload_url . '"></script>';
     }
-
-    $scripts = array();
-    $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
-    $scripts[] = '<script type="text/javascript" src="' . plugins_url('/edge-suite') . '/includes/edge-wordpress.js"></script>';
-    $scripts[] = '<script type="text/javascript" src="' . $preload_url . '"></script>';
-
 
     $div_id = 'Stage_' . $definition->project_name_unique;
 

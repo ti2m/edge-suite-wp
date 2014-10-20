@@ -237,13 +237,17 @@ class EdgeCompositionBuilder {
     $this->getPreloader();
 
     // Alter main JS edge file to so it calls custom JS from edge_drupal.js.
-    $this->alterMainEdgeJs();
+    $alteredMain = $this->alterMainEdgeJs();
 
     // Alter preload JS file so it calls custom JS from edge_drupal.js.
-    $this->alterPreloaderJs();
+    $alteredPreloader = $this->alterPreloaderJs();
 
     // Read in all the libraries and copy them to a shared edge library folder.
     $this->readLibs($replace_libraries);
+
+    if (!$alteredMain && !$alteredPreloader && empty($this->edgeVersion)) {
+      $this->parseRuntimeVersion();
+    }
 
     // Move all assets (and the _edgeAction.js)
     $this->moveEdgeFiles($this->tmpDir, $this->destinationDir);
@@ -400,6 +404,7 @@ class EdgeCompositionBuilder {
    * @throws Exception
    */
   protected function alterMainEdgeJs() {
+    $altered = FALSE;
     $file = $this->mainEdgeJS;
     // Do an extensive file / permission check as this seems to fail with many server configs.
     if(!file_exists($file)){
@@ -420,7 +425,8 @@ class EdgeCompositionBuilder {
     // Extract the composition id.
     // The relevant JS structure (might be minified).
     // (function($, Edge, compId){....})(jQuery, AdobeEdge, "MyProject");.
-    $pattern = '/}\)\(jQuery,\s?AdobeEdge,\s?\"([a-zA-Z0-9_-]*)\"/';
+    // (function($, Edge, compId){....})(AdobeEdge.$, AdobeEdge, "MyProject");
+    $pattern = '/}\)\((?:AdobeEdge\.\$|jQuery),\s?AdobeEdge,\s?\"([a-zA-Z0-9_-]*)\"/';
     $matches = array();
     $found = preg_match($pattern, $content, $matches);
     if (!$found) {
@@ -433,6 +439,7 @@ class EdgeCompositionBuilder {
     $register_pattern = '/Edge\.registerCompositionDefn\(compId,\s?symbols,\s?fonts,\s?resources(,\s?opts)?\);/';
     $register_matches = array();
     if (preg_match($register_pattern, $content, $register_matches)) {
+      $altered = TRUE;
       $opts = 'null';
       if (isset($register_matches[1])) {
         $opts = 'opts';
@@ -440,15 +447,37 @@ class EdgeCompositionBuilder {
       $register_replace = 'AdobeEdge.alterRegisterCompositionDefn(compId,symbols,fonts,resources,' . $opts . ',Edge.registerCompositionDefn);';
       $register_pattern_found = 0;
       $content = preg_replace($register_pattern, $register_replace, $content, -1, $register_pattern_found);
+
+      // Write modified file.
+      $fh = fopen($file, "w");
+      fwrite($fh, $content);
+      fclose($fh);
     }
-    else {
-      throw new Exception('Unable to alter register handler.');
+    return $altered;
+  }
+
+
+  protected function parseRuntimeVersion(){
+    $file = $this->tmpDir . '/' . $this->projectName . '.html';
+    // Do an extensive file / permission check as this seems to fail with many server configs.
+    if(!file_exists($file)){
+      throw new Exception('Main edge file ' . $file . ' does not exist.');
     }
 
-    // Write modified file.
-    $fh = fopen($file, "w");
-    fwrite($fh, $content);
-    fclose($fh);
+    if(!is_readable($file)){
+      throw new Exception('Main edge file' . $file . ' exists but is not readable.');
+    }
+
+    $content = file_get_contents($file);
+    if(!isset($content) || empty($content)){
+      throw new Exception('Main edge file ' . $file . ' does exist, cleared is_readable check, but can not be read.');
+    }
+
+    $runtime_pattern = '/animate\.adobe\.com\/runtime\/(\d\.\d\.\d)\//';
+    $matches = array();
+    if (preg_match($runtime_pattern, $content, $matches)) {
+      $this->edgeVersion = $matches[1];
+    }
   }
 
   protected function parseDimensions($content){
@@ -554,37 +583,42 @@ class EdgeCompositionBuilder {
    * assets as well
    */
   protected function alterPreloaderJs() {
+    $altered = FALSE;
     $file = $this->preloaderFile;
     $content = file_get_contents($file);
 
     // Search for the loadResource function call.
     $load_pattern = '/loadResources\(aLoader,\s?doDelayLoad\);/';
 
-    // Replace original call with call to custom function, alters preload paths.
-    $load_replace = 'AdobeEdge.alterPreloadPaths(compId, aLoader, doDelayLoad, loadResources);';
-    $content = preg_replace($load_pattern, $load_replace, $content);
+    if (preg_match($load_pattern, $content)) {
+      $altered = TRUE;
+      // Replace original call with call to custom function, alters preload paths.
+      $load_replace = 'AdobeEdge.alterPreloadPaths(compId, aLoader, doDelayLoad, loadResources);';
+      $content = preg_replace($load_pattern, $load_replace, $content);
 
-    // Search for the okToLaunchComposition function call.
-    $launch_pattern = '/AdobeEdge\.okToLaunchComposition\(compId\)/';
+      // Search for the okToLaunchComposition function call.
+      $launch_pattern = '/AdobeEdge\.okToLaunchComposition\(compId\)/';
 
-    // Replace original call with call to custom function, alters jQuery.
-    $launch_replace = 'AdobeEdge.alterOkToLaunchComposition(compId)';
-    $content = preg_replace($launch_pattern, $launch_replace, $content);
+      // Replace original call with call to custom function, alters jQuery.
+      $launch_replace = 'AdobeEdge.alterOkToLaunchComposition(compId)';
+      $content = preg_replace($launch_pattern, $launch_replace, $content);
 
-    // Find the end of the main JS function and inject to function calls to
-    // alter preContent and dlContent DOM, see JS function doc.
-    // Expected structure (might be minified).
-    // (function(compId){...})("MyProject").
-    $dom_pattern = '/\}\)\(\s?\"' . $this->stageClass . '\"\);/';
-    $dom_replace = 'AdobeEdge.alterDomPaths(preContent.dom, compId);' . "\n";
-    $dom_replace .= 'AdobeEdge.alterDomPaths(dlContent.dom, compId);' . "\n";
-    $dom_replace .= '})("' . $this->stageClass . '");';
-    $content = preg_replace($dom_pattern, $dom_replace, $content);
+      // Find the end of the main JS function and inject to function calls to
+      // alter preContent and dlContent DOM, see JS function doc.
+      // Expected structure (might be minified).
+      // (function(compId){...})("MyProject").
+      $dom_pattern = '/\}\)\(\s?\"' . $this->stageClass . '\"\);/';
+      $dom_replace = 'AdobeEdge.alterDomPaths(preContent.dom, compId);' . "\n";
+      $dom_replace .= 'AdobeEdge.alterDomPaths(dlContent.dom, compId);' . "\n";
+      $dom_replace .= '})("' . $this->stageClass . '");';
+      $content = preg_replace($dom_pattern, $dom_replace, $content);
 
-    // Write new file.
-    $fh = fopen($file, "w");
-    fwrite($fh, $content);
-    fclose($fh);
+      // Write new file.
+      $fh = fopen($file, "w");
+      fwrite($fh, $content);
+      fclose($fh);
+    }
+    return $altered;
   }
 
   /**
