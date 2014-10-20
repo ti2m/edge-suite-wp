@@ -277,7 +277,7 @@ function edge_suite_comp_render($definition_id, $styles = '', $data = array()) {
     }
 
     // Put everything together.
-    $stage = '<p><div id="' . $div_id . '" style="' . $height . $width . $styles . '" class="' . $definition->composition_id . '">' . $data_string .  '</div></p>';
+    $stage = '<div id="' . $div_id . '" style="' . $height . $width . $styles . '" class="' . $definition->composition_id . '">' . $data_string .  '</div>';
 
   }
 
