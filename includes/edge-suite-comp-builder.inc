@@ -390,9 +390,6 @@ class EdgeCompositionBuilder {
     if (file_exists($js_file_tmp)) {
       $this->preloaderFile = $js_file_tmp;
     }
-    else {
-      throw new Exception('Cannot find main JS edge file ' . $js_file_tmp . '.');
-    }
   }
 
   /**
@@ -584,39 +581,42 @@ class EdgeCompositionBuilder {
    */
   protected function alterPreloaderJs() {
     $altered = FALSE;
-    $file = $this->preloaderFile;
-    $content = file_get_contents($file);
 
-    // Search for the loadResource function call.
-    $load_pattern = '/loadResources\(aLoader,\s?doDelayLoad\);/';
+    if ($this->preloaderFile != NULL) {
+      $file = $this->preloaderFile;
+      $content = file_get_contents($file);
 
-    if (preg_match($load_pattern, $content)) {
-      $altered = TRUE;
-      // Replace original call with call to custom function, alters preload paths.
-      $load_replace = 'AdobeEdge.alterPreloadPaths(compId, aLoader, doDelayLoad, loadResources);';
-      $content = preg_replace($load_pattern, $load_replace, $content);
+      // Search for the loadResource function call.
+      $load_pattern = '/loadResources\(aLoader,\s?doDelayLoad\);/';
 
-      // Search for the okToLaunchComposition function call.
-      $launch_pattern = '/AdobeEdge\.okToLaunchComposition\(compId\)/';
+      if (preg_match($load_pattern, $content)) {
+        $altered = TRUE;
+        // Replace original call with call to custom function, alters preload paths.
+        $load_replace = 'AdobeEdge.alterPreloadPaths(compId, aLoader, doDelayLoad, loadResources);';
+        $content = preg_replace($load_pattern, $load_replace, $content);
 
-      // Replace original call with call to custom function, alters jQuery.
-      $launch_replace = 'AdobeEdge.alterOkToLaunchComposition(compId)';
-      $content = preg_replace($launch_pattern, $launch_replace, $content);
+        // Search for the okToLaunchComposition function call.
+        $launch_pattern = '/AdobeEdge\.okToLaunchComposition\(compId\)/';
 
-      // Find the end of the main JS function and inject to function calls to
-      // alter preContent and dlContent DOM, see JS function doc.
-      // Expected structure (might be minified).
-      // (function(compId){...})("MyProject").
-      $dom_pattern = '/\}\)\(\s?\"' . $this->stageClass . '\"\);/';
-      $dom_replace = 'AdobeEdge.alterDomPaths(preContent.dom, compId);' . "\n";
-      $dom_replace .= 'AdobeEdge.alterDomPaths(dlContent.dom, compId);' . "\n";
-      $dom_replace .= '})("' . $this->stageClass . '");';
-      $content = preg_replace($dom_pattern, $dom_replace, $content);
+        // Replace original call with call to custom function, alters jQuery.
+        $launch_replace = 'AdobeEdge.alterOkToLaunchComposition(compId)';
+        $content = preg_replace($launch_pattern, $launch_replace, $content);
 
-      // Write new file.
-      $fh = fopen($file, "w");
-      fwrite($fh, $content);
-      fclose($fh);
+        // Find the end of the main JS function and inject to function calls to
+        // alter preContent and dlContent DOM, see JS function doc.
+        // Expected structure (might be minified).
+        // (function(compId){...})("MyProject").
+        $dom_pattern = '/\}\)\(\s?\"' . $this->stageClass . '\"\);/';
+        $dom_replace = 'AdobeEdge.alterDomPaths(preContent.dom, compId);' . "\n";
+        $dom_replace .= 'AdobeEdge.alterDomPaths(dlContent.dom, compId);' . "\n";
+        $dom_replace .= '})("' . $this->stageClass . '");';
+        $content = preg_replace($dom_pattern, $dom_replace, $content);
+
+        // Write new file.
+        $fh = fopen($file, "w");
+        fwrite($fh, $content);
+        fclose($fh);
+      }
     }
     return $altered;
   }
