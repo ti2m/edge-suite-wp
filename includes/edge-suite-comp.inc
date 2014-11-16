@@ -222,6 +222,7 @@ function edge_suite_comp_delete_definition($definition_id) {
  *   Array with stage content and header scripts.
  */
 function edge_suite_comp_render($definition_id, $styles = '', $data = array()) {
+  global $edge_suite;
   $scripts = array();
   $stage = '';
   if ($definition_id > 0) {
@@ -236,68 +237,115 @@ function edge_suite_comp_render($definition_id, $styles = '', $data = array()) {
 
     $preload_url = $project_path . '/' . $definition->project_name . '_edgePreload.js';
 
-    if (isset($definition->info->version) && !empty($definition->info->version) && $definition->info->version >= 5) {
-      $runtime = "//animate.adobe.com/runtime/5.0.0/edge.5.0.0.min.js";
-      $composition_call_js = "AdobeEdge.loadComposition('" . $definition->project_name . "', '" . $definition->composition_id . "', {htmlRoot:'" . $project_path . '/' .  "'});";
+    $runtime_version = !isset($definition->info->version) || empty($definition->info->version) ? NULL : $definition->info->version;
+    if (!isset($edge_suite->runtime_version) || $runtime_version == NULL || $runtime_version == $edge_suite->runtime_version) {
+      if (!isset($edge_suite->runtime_version) && $runtime_version != NULL) {
+        $edge_suite->runtime_version = $runtime_version;
+      }
 
-      $js_inline = 'var script = document.createElement("script");
-      script.type= "text/javascript";
-      script.src = "' . $runtime . '";
-      var head = document.getElementsByTagName("head")[0], done=false;
-	  script.onload = script.onreadystatechange = function(){
-        if (!done && (!this.readyState || this.readyState == "loaded" || this.readyState == "complete")) {
-          done=true;
-          ' . $composition_call_js . '
-          script.onload = script.onreadystatechange = null;
-          head.removeChild(script);
-		}
-      };
-      head.appendChild(script);';
-      $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
+      if (isset($definition->info->version) && !empty($definition->info->version) && $definition->info->version >= 5) {
+        $js_inline = '';
+        if ($edge_suite->runtime_version == $definition->info->version) {
+          $edge_suite->runtime_version = $definition->info->version;
+
+          if (!isset($edge_suite->runtime_added)) {
+            $edge_suite->runtime_added = TRUE;
+            $runtime = "//animate.adobe.com/runtime/" . $definition->info->version . "/edge." . $definition->info->version . ".min.js";
+            // Mainly copied from the .html file of an OAM. To make multiple
+            // compositions on one page work the runtime can only be loaded
+            // once. When the runtime has loaded, ALL compositions on the page
+            // need to be triggered to load, not just one. Therefor ES registers
+            // each comp in a special variable (EdgeSuite.compositions) and
+            // triggers all comps with their respective data.
+            $js_inline .= 'var script = document.createElement("script");
+            script.type= "text/javascript";
+            script.src = "' . $runtime . '";
+            var head = document.getElementsByTagName("head")[0], done=false;
+            script.onload = script.onreadystatechange = function(){
+              if (!done && (!this.readyState || this.readyState == "loaded" || this.readyState == "complete")) {
+                done=true;
+                for(var c = 0; c < EdgeSuite.compositions.length; c++){
+                  var comp = EdgeSuite.compositions[c];
+                  var preloader = comp.hasPreloaderFile ? null : {};
+                  var dlstage = preloader;
+                  AdobeEdge.loadComposition(comp.name, comp.id, {htmlRoot:comp.path, scaleToFit:"width"}, preloader, dlstage);
+                }
+                script.onload = script.onreadystatechange = null;
+                head.removeChild(script);
+              }
+            };
+            head.appendChild(script);';
+          }
+
+          // Add composition data.
+          $js_inline .= 'window.EdgeSuite = window.EdgeSuite || {compositions:[]};';
+          // If hasPreloaderFile is false then the above JS code will pass empty
+          // objects as preloader and donwlevel stage options to the
+          // loadComposition call. Otherwise EA will try to load a preloader
+          // file.
+          $comp_js_data = array(
+            'name' => $definition->project_name,
+            'id' => $definition->composition_id,
+            'path' => $project_path . '/',
+            'hasPreloaderFile' => file_exists($preload_url)
+          );
+          $js_inline .= 'window.EdgeSuite.compositions.push(' . json_encode($comp_js_data) . ')';
+
+          // Clean up JS code, remove linebreaks and leading line spaces.
+          $js_inline = preg_replace("/\n(\s)*/", "", $js_inline);
+        }
+        else {
+          $js_inline = 'console.log("Compositions with varying runtime versions have been detected. This would cause all compositions to fail, some have been disabled. Upgrade older compositions to the current runtime.");';
+        }
+        $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
+      }
+      else {
+        $js_inline = 'window.AdobeEdge = window.AdobeEdge || {};';
+        $js_inline .= 'window.AdobeEdge.pathPrefix = window.AdobeEdge.pathPrefix || {};';
+        $js_inline .= "AdobeEdge.pathPrefix.libs = '" . $edge_lib_path . "';";
+        $js_inline .= "AdobeEdge.pathPrefix.comps = AdobeEdge.pathPrefix.comps || {};";
+        $js_inline .= "AdobeEdge.pathPrefix.comps['" . $definition->composition_id . "'] = '" . $project_path . "';";
+
+        if (get_option('edge_suite_debug') == 1) {
+          $js_inline .= "AdobeEdge.edgesuiteDebug = 1;";
+        }
+
+        if (get_option('edge_suite_jquery_noconflict') == 1) {
+          $js_inline .= "AdobeEdge.edgesuiteNoConflict = 1;";
+        }
+
+        $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
+        $scripts[] = '<script type="text/javascript" src="' . plugins_url('/edge-suite') . '/includes/edge-wordpress.js"></script>';
+        $scripts[] = '<script type="text/javascript" src="' . $preload_url . '"></script>';
+      }
+
+      $div_id = 'Stage_' . $definition->project_name_unique;
+
+      // Add dimension if it was possible to parse them. This avoids jumping of the
+      // empty divs when using multiple instances on one page.
+      $height = '';
+      if (isset($definition->info->height) && intval($definition->info->height) > 0) {
+        $height = 'height:' . $definition->info->height . ';';
+      }
+
+      $width = '';
+      if (isset($definition->info->width) && intval($definition->info->width) > 0) {
+        $width = 'width:' . $definition->info->width . ';';
+      }
+
+      // Generate JSON data for more advanced animations, if supplied.
+      $data_string = '';
+      if (isset($data) && !empty($data)) {
+        $data_string = '<script class="data" type="text/data">' . json_encode($data) . '</script>';
+      }
+
+      // Put everything together.
+      $stage = '<div id="' . $div_id . '" style="' . $height . $width . $styles . '" class="' . $definition->composition_id . '">' . $data_string . '</div>';
     }
     else {
-      $js_inline = 'window.AdobeEdge = window.AdobeEdge || {};';
-      $js_inline .= 'window.AdobeEdge.pathPrefix = window.AdobeEdge.pathPrefix || {};';
-      $js_inline .= "AdobeEdge.pathPrefix.libs = '" . $edge_lib_path . "';";
-      $js_inline .= "AdobeEdge.pathPrefix.comps = AdobeEdge.pathPrefix.comps || {};";
-      $js_inline .= "AdobeEdge.pathPrefix.comps['" . $definition->composition_id . "'] = '" . $project_path . "';";
-
-      if(get_option('edge_suite_debug') == 1){
-        $js_inline .= "AdobeEdge.edgesuiteDebug = 1;";
-      }
-
-      if(get_option('edge_suite_jquery_noconflict') == 1){
-        $js_inline .= "AdobeEdge.edgesuiteNoConflict = 1;";
-      }
-
+      $js_inline = 'console.log("Edge Suite - Compositions with varying runtime versions have been detected. This would cause all compositions to fail, therefore some animations have been disabled. Upgrade older compositions to the current runtime.");';
       $scripts[] = '<script type="text/javascript">' . $js_inline . '</script>';
-      $scripts[] = '<script type="text/javascript" src="' . plugins_url('/edge-suite') . '/includes/edge-wordpress.js"></script>';
-      $scripts[] = '<script type="text/javascript" src="' . $preload_url . '"></script>';
     }
-
-    $div_id = 'Stage_' . $definition->project_name_unique;
-
-    // Add dimension if it was possible to parse them. This avoids jumping of the
-    // empty divs when using multiple instances on one page.
-    $height = '';
-    if (isset($definition->info->height) && intval($definition->info->height) > 0) {
-      $height = 'height:' . $definition->info->height . ';';
-    }
-
-    $width = '';
-    if (isset($definition->info->width) && intval($definition->info->width) > 0) {
-      $width = 'width:' . $definition->info->width . ';';
-    }
-
-    // Generate JSON data for more advanced animations, if supplied.
-    $data_string = '';
-    if (isset($data) && !empty($data)) {
-      $data_string = '<script class="data" type="text/data">' . json_encode($data) . '</script>';
-    }
-
-    // Put everything together.
-    $stage = '<div id="' . $div_id . '" style="' . $height . $width . $styles . '" class="' . $definition->composition_id . '">' . $data_string .  '</div>';
-
   }
 
   return array('scripts' => $scripts, 'stage' => $stage);
