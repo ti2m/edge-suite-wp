@@ -268,7 +268,7 @@ function edge_suite_comp_render($definition_id, $styles = '', $data = array()) {
                   var comp = EdgeSuite.compositions[c];
                   var preloader = comp.hasPreloaderFile ? null : {};
                   var dlstage = preloader;
-                  AdobeEdge.loadComposition(comp.name, comp.id, {htmlRoot:comp.path, scaleToFit:"width"}, preloader, dlstage);
+                  AdobeEdge.loadComposition(comp.name, comp.id, {htmlRoot:comp.path, bScaleToParent:"true"}, preloader, dlstage);
                 }
                 script.onload = script.onreadystatechange = null;
                 head.removeChild(script);
